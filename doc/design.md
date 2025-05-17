@@ -9,7 +9,7 @@ There are two distinct classes of general processing devices: central processing
 
 ## 1. Design considerations
 
-The most basic idea of a CPU-bound proof of work is that the work must be dynamic. This takes advantage of the fact that CPUs accept two kinds of inputs: *data* (the main input) and *code* (which specifies what to perform with the data).
+The most basic idea of a CPU-bound proof of work is that the "work" must be dynamic. This takes advantage of the fact that CPUs accept two kinds of inputs: *data* (the main input) and *code* (which specifies what to perform with the data).
 
 Conversely, typical cryptographic hashing functions [[3](https://en.wikipedia.org/wiki/Cryptographic_hash_function)] do not represent suitable work for the CPU because their only input is *data*, while the sequence of operations is fixed and can be performed more efficiently by a specialized integrated circuit.
 
@@ -133,6 +133,10 @@ This section describes the design of the RandomX virtual machine (VM).
 
 RandomX uses a fixed-length instruction encoding with 8 bytes per instruction. This allows a 32-bit immediate value to be included in the instruction word. The interpretation of the instruction word bits was chosen so that any 8-byte word is a valid instruction. This allows for very efficient random program generation (see chapter 1.1.1).
 
+#### 2.1.1 Instruction complexity
+
+The VM is a complex instruction set machine that allows both register and memory addressed operands. However, each RandomX instructions translates to only 1-7 x86 instructions (1.8 on average). It is important to keep the instruction complexity relatively low to minimize the efficiency advantage of specialized hardware with a tailored instruction set.
+
 ### 2.2 Program
 
 The program executed by the VM has the form of a loop consisting of 256 random instructions.
@@ -147,7 +151,7 @@ The VM uses 8 integer registers and 12 floating point registers. This is the max
 
 ### 2.4 Integer operations
 
-RandomX uses all primitive integer operations that preserve entropy: addition (IADD_RS, IADD_M), subtraction (ISUB_R, ISUB_M, INEG_R), multiplication (IMUL_R, IMUL_M, IMULH_R, IMULH_M, ISMULH_R, ISMULH_M, IMUL_RCP), exclusive or (IXOR_R, IXOR_M) and rotation (IROR_R, IROL_R).
+RandomX uses all primitive integer operations that have high output entropy: addition (IADD_RS, IADD_M), subtraction (ISUB_R, ISUB_M, INEG_R), multiplication (IMUL_R, IMUL_M, IMULH_R, IMULH_M, ISMULH_R, ISMULH_M, IMUL_RCP), exclusive or (IXOR_R, IXOR_M) and rotation (IROR_R, IROL_R).
 
 #### 2.4.1 IADD_RS
 
@@ -157,7 +161,11 @@ The IADD_RS instruction utilizes the address calculation logic of CPUs and can b
 
 Because integer division is not fully pipelined in CPUs and can be made faster in ASICs, the IMUL_RCP instruction requires only one division per program to calculate the reciprocal. This forces an ASIC to include a hardware divider without giving them a performance advantage during program execution.
 
-#### 2.4.3 ISWAP_R
+#### 2.4.3 IROR_R/IROL_R
+
+Rotation instructions are split between rotate right and rotate left with a 4:1 ratio. Rotate right has a higher frequency because some architecures (like ARM) don't support rotate left natively (it must be emulated using rotate right).
+
+#### 2.4.4 ISWAP_R
 
 This instruction can be executed efficiently by CPUs that support register renaming/move elimination.
 
@@ -247,7 +255,7 @@ The Scratchpad is split into 3 levels to mimic the typical CPU cache hierarchy [
 |----------------|----------|----------|----------|------|
 ARM Cortex A55|2|6|-|[[24](https://www.anandtech.com/show/11441/dynamiq-and-arms-new-cpus-cortex-a75-a55/4)]
 |AMD Zen+|4|12|40|[[25](https://en.wikichip.org/wiki/amd/microarchitectures/zen%2B#Memory_Hierarchy)]|
-|Intel Skylake|4|12|42|[[26](https://en.wikichip.org/wiki/amd/microarchitectures/zen%2B#Memory_Hierarchy)]
+|Intel Skylake|4|12|42|[[26](https://en.wikichip.org/wiki/intel/microarchitectures/skylake_(client)#Memory_Hierarchy)]
 
 The L3 cache is much larger and located further from the CPU core. As a result, its access latencies are much higher and can cause stalls in program execution.
 
@@ -297,17 +305,24 @@ Using less than 256 MiB of memory is not possible due to the use of tradeoff-res
 
 ### 3.1 AesGenerator1R
 
-AesGenerator1R was designed for the fastest possible generation of pseudorandom data to fill the Scratchpad. It takes advantage of hardware accelerated AES in modern CPUs. Only one AES round is performed per 16 bytes of output, which results in throughput exceeding 20 GB/s in most modern CPUs. While 1 AES round is not sufficient for a good distribution of random values, this is not an issue because the purpose is just to initialize the Scratchpad with random non-zero data.
+AesGenerator1R was designed for the fastest possible generation of pseudorandom data to fill the Scratchpad. It takes advantage of hardware accelerated AES in modern CPUs. Only one AES round is performed per 16 bytes of output, which results in throughput exceeding 20 GB/s in most modern CPUs. 
+
+AesGenerator1R gives a good output distribution provided that it's initialized with a sufficiently 'random' initial state (see Appendix F).
 
 ### 3.2 AesGenerator4R
 
-AesGenerator4R uses 4 AES rounds to generate pseudorandom data for Program Buffer initialization. Since 2 AES rounds are sufficient for full avalanche of all input bits [[28](https://csrc.nist.gov/csrc/media/projects/cryptographic-standards-and-guidelines/documents/aes-development/rijndael-ammended.pdf)], AesGenerator4R provides an excellent output distribution while maintaining very good performance.
+AesGenerator4R uses 4 AES rounds to generate pseudorandom data for Program Buffer initialization. Since 2 AES rounds are sufficient for full avalanche of all input bits [[28](https://csrc.nist.gov/csrc/media/projects/cryptographic-standards-and-guidelines/documents/aes-development/rijndael-ammended.pdf)], AesGenerator4R has excellent statistical properties (see Appendix F) while maintaining very good performance.
 
 The reversible nature of this generator is not an issue since the generator state is always initialized using the output of a non-reversible hashing function (Blake2b).
 
 ### 3.3 AesHash1R
 
-AesHash was designed for the fastest possible calculation of the Scratchpad fingerprint. It interprets the Scratchpad as a set of AES round keys, so it's equivalent to AES encryption with 32768 rounds. Two extra rounds are performed at the end to ensure avalanche of all Scratchpad bits in each lane. The output of the AesHash is fed into the Blake2b hashing function to calculate the final PoW hash.
+AesHash was designed for the fastest possible calculation of the Scratchpad fingerprint. It interprets the Scratchpad as a set of AES round keys, so it's equivalent to AES encryption with 32768 rounds. Two extra rounds are performed at the end to ensure avalanche of all Scratchpad bits in each lane.
+
+The reversible nature of AesHash1R is not a problem for two main reasons:
+
+* It is not possible to directly control the input of AesHash1R.
+* The output of AesHash1R is passed into the Blake2b hashing function, which is not reversible.
 
 ### 3.4 SuperscalarHash
 
@@ -411,7 +426,7 @@ The following 10 designs were simulated and the average number of clock cycles t
 |-------|-----------|----------|---------------|-----------------------|---|
 |#1|1 EXU + 1 MEM|in-order|non-speculative|293|0.87|
 |#2|1 EXU + 1 MEM|in-order|speculative|262|0.98|
-|#3|1 EXU + 1 MEM|in-order|non-speculative|197|1.3|
+|#3|2 EXU + 1 MEM|in-order|non-speculative|197|1.3|
 |#4|2 EXU + 1 MEM|in-order|speculative|161|1.6|
 |#5|2 EXU + 1 MEM|out-of-order|non-speculative|144|1.8|
 |#6|2 EXU + 1 MEM|out-of-order|speculative|122|2.1|
@@ -466,7 +481,110 @@ The following figure shows the sensitivity of SuperscalarHash to changing a sing
 
 This shows that SuperscalaHash has quite low sensitivity to high-order bits and somewhat decreased sensitivity to the lowest-order bits. Sensitivity is highest for bits 3-53 (inclusive).
 
-When calculating a Dataset item, the input of the first SuperscalarHash depends only on the item number. To ensure a good distribution of results, the initial set of register values must have unique values of bits 3-53 for *all* item numbers in the range 0-34078718 (the Dataset contains 34078719 items). The constants described in section 7.3 of the Specification were chosen to meet this requirement. All initial register values for all Dataset item numbers were checked to make sure bits 3-53 of each register are unique and there are no collisions (source code: [superscalar-init.cpp](../src/tests/superscalar-init.cpp)).
+When calculating a Dataset item, the input of the first SuperscalarHash depends only on the item number. To ensure a good distribution of results, the constants described in section 7.3 of the Specification were chosen to provide unique values of bits 3-53 for *all* item numbers in the range 0-34078718 (the Dataset contains 34078719 items). All initial register values for all Dataset item numbers were checked to make sure bits 3-53 of each register are unique and there are no collisions (source code: [superscalar-init.cpp](../src/tests/superscalar-init.cpp)). While this is not strictly necessary to get unique output from SuperscalarHash, it's a security precaution that mitigates the non-perfect avalanche properties of the randomly generated SuperscalarHash instances.
+
+### F. Statistical tests of RNG
+
+Both AesGenerator1R and AesGenerator4R were tested using the TestU01 library [[30](http://simul.iro.umontreal.ca/testu01/tu01.html)] intended for empirical testing of random number generators. The source code is available in [rng-tests.cpp](../src/tests/rng-tests.cpp).
+
+The tests sample about 200 MB ("SmallCrush" test), 500 GB ("Crush" test) or 4 TB ("BigCrush" test) of output from each generator. This is considerably more than the amounts generated in RandomX (2176 bytes for AesGenerator4R and 2 MiB for AesGenerator1R), so failures in the tests don't necessarily imply that the generators are not suitable for their use case.
+
+
+#### AesGenerator4R
+The generator passes all tests in the "BigCrush" suite when initialized using the Blake2b hash function:
+
+```
+$ bin/rng-tests 1
+state0 = 67e8bbe567a1c18c91a316faf19fab73
+state1 = 39f7c0e0a8d96512c525852124fdc9fe
+state2 = 7abb07b2c90e04f098261e323eee8159
+state3 = 3df534c34cdfbb4e70f8c0e1826f4cf7
+
+...
+
+========= Summary results of BigCrush =========
+
+ Version:          TestU01 1.2.3
+ Generator:        AesGenerator4R
+ Number of statistics:  160
+ Total CPU time:   02:50:18.34
+
+ All tests were passed
+```
+
+
+The generator passes all tests in the "Crush" suite even with an initial state set to all zeroes.
+```
+$ bin/rng-tests 0
+state0 = 00000000000000000000000000000000
+state1 = 00000000000000000000000000000000
+state2 = 00000000000000000000000000000000
+state3 = 00000000000000000000000000000000
+
+...
+
+========= Summary results of Crush =========
+
+ Version:          TestU01 1.2.3
+ Generator:        AesGenerator4R
+ Number of statistics:  144
+ Total CPU time:   00:25:17.95
+
+ All tests were passed
+```
+
+#### AesGenerator1R
+
+The generator passes all tests in the "Crush" suite when initialized using the Blake2b hash function.
+
+```
+$ bin/rng-tests 1
+state0 = 67e8bbe567a1c18c91a316faf19fab73
+state1 = 39f7c0e0a8d96512c525852124fdc9fe
+state2 = 7abb07b2c90e04f098261e323eee8159
+state3 = 3df534c34cdfbb4e70f8c0e1826f4cf7
+
+...
+
+========= Summary results of Crush =========
+
+ Version:          TestU01 1.2.3
+ Generator:        AesGenerator1R
+ Number of statistics:  144
+ Total CPU time:   00:25:06.07
+
+ All tests were passed
+
+```
+
+When the initial state is initialized to all zeroes, the generator fails 1 test out of 144 tests in the "Crush" suite:
+
+```
+$ bin/rng-tests 0
+state0 = 00000000000000000000000000000000
+state1 = 00000000000000000000000000000000
+state2 = 00000000000000000000000000000000
+state3 = 00000000000000000000000000000000
+
+...
+
+========= Summary results of Crush =========
+
+ Version:          TestU01 1.2.3
+ Generator:        AesGenerator1R
+ Number of statistics:  144
+ Total CPU time:   00:26:12.75
+ The following tests gave p-values outside [0.001, 0.9990]:
+ (eps  means a value < 1.0e-300):
+ (eps1 means a value < 1.0e-15):
+
+       Test                          p-value
+ ----------------------------------------------
+ 12  BirthdaySpacings, t = 3        1 -  4.4e-5
+ ----------------------------------------------
+ All other tests were passed
+
+```
 
 ## References
 
@@ -520,7 +638,7 @@ When calculating a Dataset item, the input of the first SuperscalarHash depends 
 
 [25] AMD Zen+ Microarchitecture - https://en.wikichip.org/wiki/amd/microarchitectures/zen%2B#Memory_Hierarchy
 
-[26] Intel Skylake Microarchitecture - https://en.wikichip.org/wiki/amd/microarchitectures/zen%2B#Memory_Hierarchy
+[26] Intel Skylake Microarchitecture - https://en.wikichip.org/wiki/intel/microarchitectures/skylake_(client)#Memory_Hierarchy
 
 [27] Biryukov et al.: Fast and Tradeoff-Resilient Memory-Hard Functions for
 Cryptocurrencies and Password Hashing - https://eprint.iacr.org/2015/430.pdf Table 2, page 8
@@ -528,3 +646,5 @@ Cryptocurrencies and Password Hashing - https://eprint.iacr.org/2015/430.pdf Tab
 [28] J. Daemen, V. Rijmen: AES Proposal: Rijndael - https://csrc.nist.gov/csrc/media/projects/cryptographic-standards-and-guidelines/documents/aes-development/rijndael-ammended.pdf page 28
 
 [29] 7-Zip File archiver - https://www.7-zip.org/
+
+[30] TestU01 library - http://simul.iro.umontreal.ca/testu01/tu01.html

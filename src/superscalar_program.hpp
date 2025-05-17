@@ -30,7 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <cstdint>
 #include "instruction.hpp"
-#include "configuration.h"
+#include "common.hpp"
 
 namespace randomx {
 
@@ -52,12 +52,16 @@ namespace randomx {
 		int getAddressRegister() {
 			return addrReg;
 		}
-		void setAddressRegister(uint32_t val) {
+		void setAddressRegister(int val) {
 			addrReg = val;
 		}
 
-		Instruction programBuffer[RANDOMX_SUPERSCALAR_MAX_SIZE];
-		uint32_t size;
+		Instruction programBuffer[SuperscalarMaxSize];
+		uint32_t size
+#ifndef NDEBUG
+			= 0
+#endif
+			;
 		int addrReg;
 		double ipc;
 		int codeSize;

@@ -37,10 +37,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "superscalar.hpp"
 #include "intrin_portable.h"
 #include "reciprocal.h"
+#include "common.hpp"
 
 namespace randomx {
 
-	static bool isMultiplication(int type) {
+	static bool isMultiplication(SuperscalarInstructionType type) {
 		return type == SuperscalarInstructionType::IMUL_R || type == SuperscalarInstructionType::IMULH_R || type == SuperscalarInstructionType::ISMULH_R || type == SuperscalarInstructionType::IMUL_RCP;
 	}
 
@@ -167,7 +168,7 @@ namespace randomx {
 		const MacroOp& getOp(int index) const {
 			return ops_[index];
 		}
-		int getType() const {
+		SuperscalarInstructionType getType() const {
 			return type_;
 		}
 		int getResultOp() const {
@@ -196,7 +197,7 @@ namespace randomx {
 		static const SuperscalarInstructionInfo NOP;
 	private:
 		const char* name_;
-		int type_;
+		SuperscalarInstructionType type_;
 		std::vector<MacroOp> ops_;
 		int latency_;
 		int resultOp_ = 0;
@@ -204,13 +205,13 @@ namespace randomx {
 		int srcOp_;
 
 		SuperscalarInstructionInfo(const char* name)
-			: name_(name), type_(-1), latency_(0) {}
-		SuperscalarInstructionInfo(const char* name, int type, const MacroOp& op, int srcOp)
+			: name_(name), type_(SuperscalarInstructionType::INVALID), latency_(0) {}
+		SuperscalarInstructionInfo(const char* name, SuperscalarInstructionType type, const MacroOp& op, int srcOp)
 			: name_(name), type_(type), latency_(op.getLatency()), srcOp_(srcOp) {
 			ops_.push_back(MacroOp(op));
 		}
 		template <size_t N>
-		SuperscalarInstructionInfo(const char* name, int type, const MacroOp(&arr)[N], int resultOp, int dstOp, int srcOp)
+		SuperscalarInstructionInfo(const char* name, SuperscalarInstructionType type, const MacroOp(&arr)[N], int resultOp, int dstOp, int srcOp)
 			: name_(name), type_(type), latency_(0), resultOp_(resultOp), dstOp_(dstOp), srcOp_(srcOp) {
 			for (unsigned i = 0; i < N; ++i) {
 				ops_.push_back(MacroOp(arr[i]));
@@ -267,7 +268,7 @@ namespace randomx {
 		const char* getName() const {
 			return name_;
 		}
-		const DecoderBuffer* fetchNext(int instrType, int cycle, int mulCount, Blake2Generator& gen) const {
+		const DecoderBuffer* fetchNext(SuperscalarInstructionType instrType, int cycle, int mulCount, Blake2Generator& gen) const {
 			//If the current RandomX instruction is "IMULH", the next fetch configuration must be 3-3-10
 			//because the full 128-bit multiplication instruction is 3 bytes long and decodes to 2 uOPs on Intel CPUs.
 			//Intel CPUs can decode at most 4 uOPs per cycle, so this requires a 2-1-1 configuration for a total of 3 macro ops.
@@ -334,7 +335,7 @@ namespace randomx {
 			return false;
 
 		if (availableRegisters.size() > 1) {
-			index = gen.getInt32() % availableRegisters.size();
+			index = gen.getUInt32() % availableRegisters.size();
 		}
 		else {
 			index = 0;
@@ -345,9 +346,9 @@ namespace randomx {
 
 	class RegisterInfo {
 	public:
-		RegisterInfo() : latency(0), lastOpGroup(-1), lastOpPar(-1), value(0) {}
+		RegisterInfo() : latency(0), lastOpGroup(SuperscalarInstructionType::INVALID), lastOpPar(-1), value(0) {}
 		int latency;
-		int lastOpGroup;
+		SuperscalarInstructionType lastOpGroup;
 		int lastOpPar;
 		int value;
 	};
@@ -356,7 +357,7 @@ namespace randomx {
 	class SuperscalarInstruction {
 	public:
 		void toInstr(Instruction& instr) { //translate to a RandomX instruction format
-			instr.opcode = getType();
+			instr.opcode = (int)getType();
 			instr.dst = dst_;
 			instr.src = src_ >= 0 ? src_ : dst_;
 			instr.setMod(mod_);
@@ -447,7 +448,7 @@ namespace randomx {
 			case SuperscalarInstructionType::IADD_C8:
 			case SuperscalarInstructionType::IADD_C9: {
 				mod_ = 0;
-				imm32_ = gen.getInt32();
+				imm32_ = gen.getUInt32();
 				opGroup_ = SuperscalarInstructionType::IADD_C7;
 				opGroupPar_ = -1;
 			} break;
@@ -456,7 +457,7 @@ namespace randomx {
 			case SuperscalarInstructionType::IXOR_C8:
 			case SuperscalarInstructionType::IXOR_C9: {
 				mod_ = 0;
-				imm32_ = gen.getInt32();
+				imm32_ = gen.getUInt32();
 				opGroup_ = SuperscalarInstructionType::IXOR_C7;
 				opGroupPar_ = -1;
 			} break;
@@ -466,7 +467,7 @@ namespace randomx {
 				mod_ = 0;
 				imm32_ = 0;
 				opGroup_ = SuperscalarInstructionType::IMULH_R;
-				opGroupPar_ = gen.getInt32();
+				opGroupPar_ = gen.getUInt32();
 			} break;
 
 			case SuperscalarInstructionType::ISMULH_R: {
@@ -474,14 +475,14 @@ namespace randomx {
 				mod_ = 0;
 				imm32_ = 0;
 				opGroup_ = SuperscalarInstructionType::ISMULH_R;
-				opGroupPar_ = gen.getInt32();
+				opGroupPar_ = gen.getUInt32();
 			} break;
 
 			case SuperscalarInstructionType::IMUL_RCP: {
 				mod_ = 0;
 				do {
-					imm32_ = gen.getInt32();
-				} while ((imm32_ & (imm32_ - 1)) == 0);
+					imm32_ = gen.getUInt32();
+				} while (isZeroOrPowerOf2(imm32_));
 				opGroup_ = SuperscalarInstructionType::IMUL_RCP;
 				opGroupPar_ = -1;
 			} break;
@@ -534,7 +535,7 @@ namespace randomx {
 			return false;
 		}
 
-		int getType() {
+		SuperscalarInstructionType getType() {
 			return info_->getType();
 		}
 		int getSource() {
@@ -543,7 +544,7 @@ namespace randomx {
 		int getDestination() {
 			return dst_;
 		}
-		int getGroup() {
+		SuperscalarInstructionType getGroup() {
 			return opGroup_;
 		}
 		int getGroupPar() {
@@ -562,7 +563,7 @@ namespace randomx {
 		int dst_ = -1;
 		int mod_;
 		uint32_t imm32_;
-		int opGroup_;
+		SuperscalarInstructionType opGroup_;
 		int opGroupPar_;
 		bool canReuse_ = false;
 		bool groupParIsSource_ = false;
@@ -636,7 +637,7 @@ namespace randomx {
 				int cycle1 = scheduleUop<false>(mop.getUop1(), portBusy, cycle);
 				int cycle2 = scheduleUop<false>(mop.getUop2(), portBusy, cycle);
 
-				if (cycle1 == cycle2) {
+				if (cycle1 >= 0 && cycle1 == cycle2) {
 					if (commit) {
 						scheduleUop<true>(mop.getUop1(), portBusy, cycle1);
 						scheduleUop<true>(mop.getUop2(), portBusy, cycle2);
@@ -673,8 +674,8 @@ namespace randomx {
 		//Each decode cycle decodes 16 bytes of x86 code.
 		//Since a decode cycle produces on average 3.45 macro-ops and there are only 3 ALU ports, execution ports are always
 		//saturated first. The cycle limit is present only to guarantee loop termination.
-		//Program size is limited to RANDOMX_SUPERSCALAR_MAX_SIZE instructions.
-		for (decodeCycle = 0; decodeCycle < RANDOMX_SUPERSCALAR_LATENCY && !portsSaturated && programSize < RANDOMX_SUPERSCALAR_MAX_SIZE; ++decodeCycle) {
+		//Program size is limited to SuperscalarMaxSize instructions.
+		for (decodeCycle = 0; decodeCycle < RANDOMX_SUPERSCALAR_LATENCY && !portsSaturated && programSize < SuperscalarMaxSize; ++decodeCycle) {
 
 			//select a decode configuration
 			decodeBuffer = decodeBuffer->fetchNext(currentInstruction.getType(), decodeCycle, mulCount, gen);
@@ -688,7 +689,7 @@ namespace randomx {
 
 				//if we have issued all macro-ops for the current RandomX instruction, create a new instruction
 				if (macroOpIndex >= currentInstruction.getInfo().getSize()) {
-					if (portsSaturated || programSize >= RANDOMX_SUPERSCALAR_MAX_SIZE)
+					if (portsSaturated || programSize >= SuperscalarMaxSize)
 						break;
 					//select an instruction so that the first macro-op fits into the current slot
 					currentInstruction.createForSlot(gen, decodeBuffer->getCounts()[bufferIndex], decodeBuffer->getIndex(), decodeBuffer->getSize() == bufferIndex + 1, bufferIndex == 0);
@@ -759,6 +760,12 @@ namespace randomx {
 
 				//recalculate when the instruction can be scheduled for execution based on operand availability
 				scheduleCycle = scheduleMop<true>(mop, portBusy, scheduleCycle, scheduleCycle);
+
+				if (scheduleCycle < 0) {
+					if (trace) std::cout << "Unable to map operation '" << mop.getName() << "' to execution port (cycle " << scheduleCycle << ")" << std::endl;
+					portsSaturated = true;
+					break;
+				}
 
 				//calculate when the result will be ready
 				depCycle = scheduleCycle + mop.getLatency();
@@ -849,40 +856,40 @@ namespace randomx {
 	void executeSuperscalar(int_reg_t(&r)[8], SuperscalarProgram& prog, std::vector<uint64_t> *reciprocals) {
 		for (unsigned j = 0; j < prog.getSize(); ++j) {
 			Instruction& instr = prog(j);
-			switch (instr.opcode)
+			switch ((SuperscalarInstructionType)instr.opcode)
 			{
-			case randomx::SuperscalarInstructionType::ISUB_R:
+			case SuperscalarInstructionType::ISUB_R:
 				r[instr.dst] -= r[instr.src];
 				break;
-			case randomx::SuperscalarInstructionType::IXOR_R:
+			case SuperscalarInstructionType::IXOR_R:
 				r[instr.dst] ^= r[instr.src];
 				break;
-			case randomx::SuperscalarInstructionType::IADD_RS:
+			case SuperscalarInstructionType::IADD_RS:
 				r[instr.dst] += r[instr.src] << instr.getModShift();
 				break;
-			case randomx::SuperscalarInstructionType::IMUL_R:
+			case SuperscalarInstructionType::IMUL_R:
 				r[instr.dst] *= r[instr.src];
 				break;
-			case randomx::SuperscalarInstructionType::IROR_C:
+			case SuperscalarInstructionType::IROR_C:
 				r[instr.dst] = rotr(r[instr.dst], instr.getImm32());
 				break;
-			case randomx::SuperscalarInstructionType::IADD_C7:
-			case randomx::SuperscalarInstructionType::IADD_C8:
-			case randomx::SuperscalarInstructionType::IADD_C9:
+			case SuperscalarInstructionType::IADD_C7:
+			case SuperscalarInstructionType::IADD_C8:
+			case SuperscalarInstructionType::IADD_C9:
 				r[instr.dst] += signExtend2sCompl(instr.getImm32());
 				break;
-			case randomx::SuperscalarInstructionType::IXOR_C7:
-			case randomx::SuperscalarInstructionType::IXOR_C8:
-			case randomx::SuperscalarInstructionType::IXOR_C9:
+			case SuperscalarInstructionType::IXOR_C7:
+			case SuperscalarInstructionType::IXOR_C8:
+			case SuperscalarInstructionType::IXOR_C9:
 				r[instr.dst] ^= signExtend2sCompl(instr.getImm32());
 				break;
-			case randomx::SuperscalarInstructionType::IMULH_R:
+			case SuperscalarInstructionType::IMULH_R:
 				r[instr.dst] = mulh(r[instr.dst], r[instr.src]);
 				break;
-			case randomx::SuperscalarInstructionType::ISMULH_R:
+			case SuperscalarInstructionType::ISMULH_R:
 				r[instr.dst] = smulh(r[instr.dst], r[instr.src]);
 				break;
-			case randomx::SuperscalarInstructionType::IMUL_RCP:
+			case SuperscalarInstructionType::IMUL_RCP:
 				if (reciprocals != nullptr)
 					r[instr.dst] *= (*reciprocals)[instr.getImm32()];
 				else

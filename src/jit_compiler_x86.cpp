@@ -34,7 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "superscalar.hpp"
 #include "program.hpp"
 #include "reciprocal.h"
-#include "virtual_memory.hpp"
+#include "virtual_memory.h"
 
 namespace randomx {
 	/*
@@ -76,22 +76,46 @@ namespace randomx {
 
 	*/
 
-	const uint8_t* codePrologue = (uint8_t*)&randomx_program_prologue;
-	const uint8_t* codeLoopBegin = (uint8_t*)&randomx_program_loop_begin;
-	const uint8_t* codeLoopLoad = (uint8_t*)&randomx_program_loop_load;
-	const uint8_t* codeProgamStart = (uint8_t*)&randomx_program_start;
-	const uint8_t* codeReadDataset = (uint8_t*)&randomx_program_read_dataset;
-	const uint8_t* codeReadDatasetLightSshInit = (uint8_t*)&randomx_program_read_dataset_sshash_init;
-	const uint8_t* codeReadDatasetLightSshFin = (uint8_t*)&randomx_program_read_dataset_sshash_fin;
-	const uint8_t* codeDatasetInit = (uint8_t*)&randomx_dataset_init;
-	const uint8_t* codeLoopStore = (uint8_t*)&randomx_program_loop_store;
-	const uint8_t* codeLoopEnd = (uint8_t*)&randomx_program_loop_end;
-	const uint8_t* codeEpilogue = (uint8_t*)&randomx_program_epilogue;
-	const uint8_t* codeProgramEnd = (uint8_t*)&randomx_program_end;
-	const uint8_t* codeShhLoad = (uint8_t*)&randomx_sshash_load;
-	const uint8_t* codeShhPrefetch = (uint8_t*)&randomx_sshash_prefetch;
-	const uint8_t* codeShhEnd = (uint8_t*)&randomx_sshash_end;
-	const uint8_t* codeShhInit = (uint8_t*)&randomx_sshash_init;
+	//Calculate the required code buffer size that is sufficient for the largest possible program:
+
+	constexpr size_t MaxRandomXInstrCodeSize = 32;   //FDIV_M requires up to 32 bytes of x86 code
+	constexpr size_t MaxSuperscalarInstrSize = 14;   //IMUL_RCP requires 14 bytes of x86 code
+	constexpr size_t SuperscalarProgramHeader = 128; //overhead per superscalar program
+	constexpr size_t CodeAlign = 4096;               //align code size to a multiple of 4 KiB
+	constexpr size_t ReserveCodeSize = CodeAlign;    //function prologue/epilogue + reserve
+
+	constexpr size_t RandomXCodeSize = alignSize(ReserveCodeSize + MaxRandomXInstrCodeSize * RANDOMX_PROGRAM_SIZE, CodeAlign);
+	constexpr size_t SuperscalarSize = alignSize(ReserveCodeSize + (SuperscalarProgramHeader + MaxSuperscalarInstrSize * SuperscalarMaxSize) * RANDOMX_CACHE_ACCESSES, CodeAlign);
+
+	static_assert(RandomXCodeSize < INT32_MAX / 2, "RandomXCodeSize is too large");
+	static_assert(SuperscalarSize < INT32_MAX / 2, "SuperscalarSize is too large");
+
+	constexpr uint32_t CodeSize = RandomXCodeSize + SuperscalarSize;
+
+	constexpr int32_t superScalarHashOffset = RandomXCodeSize;
+
+#if defined(_MSC_VER) && (defined(_DEBUG) || defined (RELWITHDEBINFO))
+#define ADDR(x) ((((uint8_t*)&x)[0] == 0xE9) ? (((uint8_t*)&x) + *(const int32_t*)(((uint8_t*)&x) + 1) + 5) : ((uint8_t*)&x))
+#else
+#define ADDR(x) ((uint8_t*)&x)
+#endif
+
+	const uint8_t* codePrologue = ADDR(randomx_program_prologue);
+	const uint8_t* codeLoopBegin = ADDR(randomx_program_loop_begin);
+	const uint8_t* codeLoopLoad = ADDR(randomx_program_loop_load);
+	const uint8_t* codeProgamStart = ADDR(randomx_program_start);
+	const uint8_t* codeReadDataset = ADDR(randomx_program_read_dataset);
+	const uint8_t* codeReadDatasetLightSshInit = ADDR(randomx_program_read_dataset_sshash_init);
+	const uint8_t* codeReadDatasetLightSshFin = ADDR(randomx_program_read_dataset_sshash_fin);
+	const uint8_t* codeDatasetInit = ADDR(randomx_dataset_init);
+	const uint8_t* codeLoopStore = ADDR(randomx_program_loop_store);
+	const uint8_t* codeLoopEnd = ADDR(randomx_program_loop_end);
+	const uint8_t* codeEpilogue = ADDR(randomx_program_epilogue);
+	const uint8_t* codeProgramEnd = ADDR(randomx_program_end);
+	const uint8_t* codeShhLoad = ADDR(randomx_sshash_load);
+	const uint8_t* codeShhPrefetch = ADDR(randomx_sshash_prefetch);
+	const uint8_t* codeShhEnd = ADDR(randomx_sshash_end);
+	const uint8_t* codeShhInit = ADDR(randomx_sshash_init);
 
 	const int32_t prologueSize = codeLoopBegin - codePrologue;
 	const int32_t loopLoadSize = codeProgamStart - codeLoopLoad;
@@ -106,7 +130,6 @@ namespace randomx {
 	const int32_t codeSshInitSize = codeProgramEnd - codeShhInit;
 
 	const int32_t epilogueOffset = CodeSize - epilogueSize;
-	constexpr int32_t superScalarHashOffset = 32768;
 
 	static const uint8_t REX_ADD_RR[] = { 0x4d, 0x03 };
 	static const uint8_t REX_ADD_RM[] = { 0x4c, 0x03 };
@@ -181,7 +204,7 @@ namespace randomx {
 	static const uint8_t REX_TEST[] = { 0x49, 0xF7 };
 	static const uint8_t JZ[] = { 0x0f, 0x84 };
 	static const uint8_t RET = 0xc3;
-	static const uint8_t LEA_32[] = { 0x67, 0x41, 0x8d };
+	static const uint8_t LEA_32[] = { 0x41, 0x8d };
 	static const uint8_t MOVNTI[] = { 0x4c, 0x0f, 0xc3 };
 	static const uint8_t ADD_EBX_I[] = { 0x81, 0xc3 };
 
@@ -197,11 +220,13 @@ namespace randomx {
 	static const uint8_t* NOPX[] = { NOP1, NOP2, NOP3, NOP4, NOP5, NOP6, NOP7, NOP8 };
 
 	size_t JitCompilerX86::getCodeSize() {
-		return codePos - prologueSize;
+		return CodeSize;
 	}
 
 	JitCompilerX86::JitCompilerX86() {
-		code = (uint8_t*)allocExecutableMemory(CodeSize);
+		code = (uint8_t*)allocMemoryPages(CodeSize);
+		if (code == nullptr)
+			throw std::runtime_error("allocMemoryPages");
 		memcpy(code, codePrologue, prologueSize);
 		memcpy(code + epilogueOffset, codeEpilogue, epilogueSize);
 	}
@@ -210,11 +235,23 @@ namespace randomx {
 		freePagedMemory(code, CodeSize);
 	}
 
+	void JitCompilerX86::enableAll() {
+		setPagesRWX(code, CodeSize);
+	}
+
+	void JitCompilerX86::enableWriting() {
+		setPagesRW(code, CodeSize);
+	}
+
+	void JitCompilerX86::enableExecution() {
+		setPagesRX(code, CodeSize);
+	}
+
 	void JitCompilerX86::generateProgram(Program& prog, ProgramConfiguration& pcfg) {
 		generateProgramPrologue(prog, pcfg);
 		memcpy(code + codePos, codeReadDataset, readDatasetSize);
 		codePos += readDatasetSize;
-		generateProgramEpilogue(prog);
+		generateProgramEpilogue(prog, pcfg);
 	}
 
 	void JitCompilerX86::generateProgramLight(Program& prog, ProgramConfiguration& pcfg, uint32_t datasetOffset) {
@@ -225,7 +262,7 @@ namespace randomx {
 		emitByte(CALL);
 		emit32(superScalarHashOffset - (codePos + 4));
 		emit(codeReadDatasetLightSshFin, readDatasetLightFinSize);
-		generateProgramEpilogue(prog);
+		generateProgramEpilogue(prog, pcfg);
 	}
 
 	template<size_t N>
@@ -266,15 +303,12 @@ namespace randomx {
 
 	void JitCompilerX86::generateProgramPrologue(Program& prog, ProgramConfiguration& pcfg) {
 		instructionOffsets.clear();
-		for (unsigned i = 0; i < 8; ++i) {
+		for (unsigned i = 0; i < RegistersCount; ++i) {
 			registerUsage[i] = -1;
 		}
+
 		codePos = prologueSize;
 		memcpy(code + codePos - 48, &pcfg.eMask, sizeof(pcfg.eMask));
-		emit(REX_XOR_RAX_R64);
-		emitByte(0xc0 + pcfg.readReg0);
-		emit(REX_XOR_RAX_R64);
-		emitByte(0xc0 + pcfg.readReg1);
 		memcpy(code + codePos, codeLoopLoad, loopLoadSize);
 		codePos += loopLoadSize;
 		for (unsigned i = 0; i < prog.getSize(); ++i) {
@@ -289,7 +323,12 @@ namespace randomx {
 		emitByte(0xc0 + pcfg.readReg3);
 	}
 
-	void JitCompilerX86::generateProgramEpilogue(Program& prog) {
+	void JitCompilerX86::generateProgramEpilogue(Program& prog, ProgramConfiguration& pcfg) {
+		emit(REX_MOV_RR64);
+		emitByte(0xc0 + pcfg.readReg0);
+		emit(REX_XOR_RAX_R64);
+		emitByte(0xc0 + pcfg.readReg1);
+		emit(ADDR(randomx_prefetch_scratchpad), ADDR(randomx_prefetch_scratchpad_end) - ADDR(randomx_prefetch_scratchpad));
 		memcpy(code + codePos, codeLoopStore, loopStoreSize);
 		codePos += loopStoreSize;
 		emit(SUB_EBX);
@@ -306,7 +345,7 @@ namespace randomx {
 	}
 
 	void JitCompilerX86::generateSuperscalarCode(Instruction& instr, std::vector<uint64_t> &reciprocalCache) {
-		switch (instr.opcode)
+		switch ((SuperscalarInstructionType)instr.opcode)
 		{
 		case randomx::SuperscalarInstructionType::ISUB_R:
 			emit(REX_SUB_RR);
@@ -579,8 +618,8 @@ namespace randomx {
 	}
 
 	void JitCompilerX86::h_IMUL_RCP(Instruction& instr, int i) {
-		uint64_t divisor = instr.getImm32();
-		if (!isPowerOf2(divisor)) {
+		const uint32_t divisor = instr.getImm32();
+		if (!isZeroOrPowerOf2(divisor)) {
 			registerUsage[instr.dst] = i;
 			emit(MOV_RAX_I);
 			emit64(randomx_reciprocal_fast(divisor));

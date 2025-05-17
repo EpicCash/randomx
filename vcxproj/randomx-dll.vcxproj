@@ -43,7 +43,7 @@
     <ClInclude Include="..\src\superscalar.hpp" />
     <ClInclude Include="..\src\superscalar_program.hpp" />
     <ClInclude Include="..\src\virtual_machine.hpp" />
-    <ClInclude Include="..\src\virtual_memory.hpp" />
+    <ClInclude Include="..\src\virtual_memory.h" />
     <ClInclude Include="..\src\vm_compiled.hpp" />
     <ClInclude Include="..\src\vm_compiled_light.hpp" />
     <ClInclude Include="..\src\vm_interpreted.hpp" />
@@ -54,11 +54,17 @@
   <ItemGroup>
     <ClCompile Include="..\src\aes_hash.cpp" />
     <ClCompile Include="..\src\allocator.cpp" />
+    <ClCompile Include="..\src\argon2_avx2.c">
+      <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Release|x64'">AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+    </ClCompile>
     <ClCompile Include="..\src\argon2_core.c" />
     <ClCompile Include="..\src\argon2_ref.c" />
+    <ClCompile Include="..\src\argon2_ssse3.c" />
     <ClCompile Include="..\src\assembly_generator_x86.cpp" />
     <ClCompile Include="..\src\blake2\blake2b.c" />
     <ClCompile Include="..\src\blake2_generator.cpp" />
+    <ClCompile Include="..\src\bytecode_machine.cpp" />
+    <ClCompile Include="..\src\cpu.cpp" />
     <ClCompile Include="..\src\dataset.cpp" />
     <ClCompile Include="..\src\instruction.cpp" />
     <ClCompile Include="..\src\instructions_portable.cpp" />
@@ -68,7 +74,7 @@
     <ClCompile Include="..\src\soft_aes.cpp" />
     <ClCompile Include="..\src\superscalar.cpp" />
     <ClCompile Include="..\src\virtual_machine.cpp" />
-    <ClCompile Include="..\src\virtual_memory.cpp" />
+    <ClCompile Include="..\src\virtual_memory.c" />
     <ClCompile Include="..\src\vm_compiled.cpp" />
     <ClCompile Include="..\src\vm_compiled_light.cpp" />
     <ClCompile Include="..\src\vm_interpreted.cpp" />
@@ -79,32 +85,32 @@
     <ProjectGuid>{59560AD8-18E3-463E-A941-BBD808EC7C83}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>randomxdll</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
