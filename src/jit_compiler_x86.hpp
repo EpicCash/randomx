@@ -36,14 +36,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace randomx {
 
 	class Program;
-	class ProgramConfiguration;
+	struct ProgramConfiguration;
 	class SuperscalarProgram;
 	class JitCompilerX86;
 	class Instruction;
 
 	typedef void(JitCompilerX86::*InstructionGeneratorX86)(Instruction&, int);
-
-	constexpr uint32_t CodeSize = 64 * 1024;
 
 	class JitCompilerX86 {
 	public:
@@ -64,6 +62,9 @@ namespace randomx {
 			return code;
 		}
 		size_t getCodeSize();
+		void enableWriting();
+		void enableExecution();
+		void enableAll();
 	private:
 		static InstructionGeneratorX86 engine[256];
 		std::vector<int32_t> instructionOffsets;
@@ -72,7 +73,7 @@ namespace randomx {
 		int32_t codePos;
 
 		void generateProgramPrologue(Program&, ProgramConfiguration&);
-		void generateProgramEpilogue(Program&);
+		void generateProgramEpilogue(Program&, ProgramConfiguration&);
 		void genAddressReg(Instruction&, bool);
 		void genAddressRegDst(Instruction&);
 		void genAddressImm(Instruction&);

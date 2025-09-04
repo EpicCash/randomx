@@ -32,34 +32,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 #include "common.hpp"
 #include "virtual_machine.hpp"
+#include "bytecode_machine.hpp"
 #include "intrin_portable.h"
 #include "allocator.hpp"
 
 namespace randomx {
 
-	struct InstructionByteCode {
-		union {
-			int_reg_t* idst;
-			rx_vec_f128* fdst;
-		};
-		union {
-			int_reg_t* isrc;
-			rx_vec_f128* fsrc;
-		};
-		union {
-			uint64_t imm;
-			int64_t simm;
-		};
-		uint16_t type;
-		union {
-			int16_t target;
-			uint16_t shift;
-		};
-		uint32_t memMask;
-	};
-
 	template<class Allocator, bool softAes>
-	class InterpretedVm : public VmBase<Allocator, softAes> {
+	class InterpretedVm : public VmBase<Allocator, softAes>, public BytecodeMachine {
 	public:
 		using VmBase<Allocator, softAes>::mem;
 		using VmBase<Allocator, softAes>::scratchpad;
@@ -81,15 +61,11 @@ namespace randomx {
 		void setDataset(randomx_dataset* dataset) override;
 	protected:
 		virtual void datasetRead(uint64_t blockNumber, int_reg_t(&r)[RegistersCount]);
+		virtual void datasetPrefetch(uint64_t blockNumber);
 	private:
 		void execute();
-		void precompileProgram(int_reg_t(&r)[RegistersCount], rx_vec_f128(&f)[RegisterCountFlt], rx_vec_f128(&e)[RegisterCountFlt], rx_vec_f128(&a)[RegisterCountFlt]);
-		void executeBytecode(int_reg_t(&r)[RegistersCount], rx_vec_f128(&f)[RegisterCountFlt], rx_vec_f128(&e)[RegisterCountFlt], rx_vec_f128(&a)[RegisterCountFlt]);
-		void executeBytecode(int& i, int_reg_t(&r)[RegistersCount], rx_vec_f128(&f)[RegisterCountFlt], rx_vec_f128(&e)[RegisterCountFlt], rx_vec_f128(&a)[RegisterCountFlt]);
-		void* getScratchpadAddress(InstructionByteCode& ibc);
-		rx_vec_f128 maskRegisterExponentMantissa(rx_vec_f128);
 
-		InstructionByteCode byteCode[RANDOMX_PROGRAM_SIZE];
+		InstructionByteCode bytecode[RANDOMX_PROGRAM_SIZE];
 	};
 
 	using InterpretedVmDefault = InterpretedVm<AlignedAllocator<CacheLineSize>, true>;

@@ -33,6 +33,12 @@
 #define DECL(x) x
 #endif
 
+#if defined(__WIN32__) || defined(__CYGWIN__)
+#define WINABI
+#endif
+
+.global DECL(randomx_prefetch_scratchpad)
+.global DECL(randomx_prefetch_scratchpad_end)
 .global DECL(randomx_program_prologue)
 .global DECL(randomx_program_loop_begin)
 .global DECL(randomx_program_loop_load)
@@ -56,26 +62,43 @@
 #define RANDOMX_SCRATCHPAD_MASK      (RANDOMX_SCRATCHPAD_L3-64)
 #define RANDOMX_DATASET_BASE_MASK    (RANDOMX_DATASET_BASE_SIZE-64)
 #define RANDOMX_CACHE_MASK           (RANDOMX_ARGON_MEMORY*16-1)
+#define RANDOMX_ALIGN                4096
+#define SUPERSCALAR_OFFSET           ((((RANDOMX_ALIGN + 32 * RANDOMX_PROGRAM_SIZE) - 1) / (RANDOMX_ALIGN) + 1) * (RANDOMX_ALIGN))
 
 #define db .byte
 
+DECL(randomx_prefetch_scratchpad):
+	mov rdx, rax
+	and eax, RANDOMX_SCRATCHPAD_MASK
+	prefetcht0 [rsi+rax]
+	ror rdx, 32
+	and edx, RANDOMX_SCRATCHPAD_MASK
+	prefetcht0 [rsi+rdx]
+
+DECL(randomx_prefetch_scratchpad_end):
+
 .balign 64
 DECL(randomx_program_prologue):
-#if defined(__CYGWIN__)
+#if defined(WINABI)
 	#include "asm/program_prologue_win64.inc"
 #else
 	#include "asm/program_prologue_linux.inc"
 #endif
-	movapd xmm13, xmmword ptr mantissaMask[rip]
-	movapd xmm14, xmmword ptr exp240[rip]
-	movapd xmm15, xmmword ptr scaleMask[rip]
-	jmp DECL(randomx_program_loop_begin)
+	movapd xmm13, xmmword ptr [mantissaMask+rip]
+	movapd xmm14, xmmword ptr [exp240+rip]
+	movapd xmm15, xmmword ptr [scaleMask+rip]
+	mov rdx, rax
+	and eax, RANDOMX_SCRATCHPAD_MASK
+	ror rdx, 32
+	and edx, RANDOMX_SCRATCHPAD_MASK
+	jmp rx_program_loop_begin
 
 .balign 64
 	#include "asm/program_xmm_constants.inc"
 
 .balign 64
 DECL(randomx_program_loop_begin):
+rx_program_loop_begin:
 	nop
 
 DECL(randomx_program_loop_load):
@@ -101,13 +124,14 @@ DECL(randomx_program_loop_end):
 
 .balign 64
 DECL(randomx_dataset_init):
+rx_dataset_init:
 	push rbx
 	push rbp
 	push r12
 	push r13
 	push r14
 	push r15
-#if defined(__CYGWIN__)
+#if defined(WINABI)
 	push rdi
 	push rsi
 	mov rdi, qword ptr [rcx] ;# cache->memory
@@ -124,8 +148,7 @@ init_block_loop:
 	prefetchw byte ptr [rsi]
 	mov rbx, rbp
 	.byte 232 ;# 0xE8 = call
-	;# .set CALL_LOC, 
-	.int 32768 - (call_offset - DECL(randomx_dataset_init))
+	.int SUPERSCALAR_OFFSET - (call_offset - rx_dataset_init)
 call_offset:
 	mov qword ptr [rsi+0], r8
 	mov qword ptr [rsi+8], r9
@@ -140,7 +163,7 @@ call_offset:
 	cmp rbp, qword ptr [rsp]
 	jb init_block_loop
 	pop rax
-#if defined(__CYGWIN__)
+#if defined(WINABI)
 	pop rsi
 	pop rdi
 #endif
@@ -155,7 +178,7 @@ call_offset:
 .balign 64
 DECL(randomx_program_epilogue):
 	#include "asm/program_epilogue_store.inc"
-#if defined(__CYGWIN__)
+#if defined(WINABI)
 	#include "asm/program_epilogue_win64.inc"
 #else
 	#include "asm/program_epilogue_linux.inc"
@@ -175,32 +198,33 @@ DECL(randomx_sshash_end):
 DECL(randomx_sshash_init):
 	lea r8, [rbx+1]
 	#include "asm/program_sshash_prefetch.inc"
-	imul r8, qword ptr r0_mul[rip]
-	mov r9, qword ptr r1_add[rip]
+	imul r8, qword ptr [r0_mul+rip]
+	mov r9, qword ptr [r1_add+rip]
 	xor r9, r8
-	mov r10, qword ptr r2_add[rip]
+	mov r10, qword ptr [r2_add+rip]
 	xor r10, r8
-	mov r11, qword ptr r3_add[rip]
+	mov r11, qword ptr [r3_add+rip]
 	xor r11, r8
-	mov r12, qword ptr r4_add[rip]
+	mov r12, qword ptr [r4_add+rip]
 	xor r12, r8
-	mov r13, qword ptr r5_add[rip]
+	mov r13, qword ptr [r5_add+rip]
 	xor r13, r8
-	mov r14, qword ptr r6_add[rip]
+	mov r14, qword ptr [r6_add+rip]
 	xor r14, r8
-	mov r15, qword ptr r7_add[rip]
+	mov r15, qword ptr [r7_add+rip]
 	xor r15, r8
-	jmp DECL(randomx_program_end)
+	jmp rx_program_end
 
 .balign 64
 	#include "asm/program_sshash_constants.inc"
-	
+
 .balign 64
 DECL(randomx_program_end):
+rx_program_end:
 	nop
 
 DECL(randomx_reciprocal_fast):
-#if !defined(__CYGWIN__)
+#if !defined(WINABI)
 	mov rcx, rdi
 #endif
 	#include "asm/randomx_reciprocal.inc"

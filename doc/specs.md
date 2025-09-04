@@ -29,7 +29,7 @@ RandomX is a proof of work (PoW) algorithm which was designed to close the gap b
 
 **AesHash1R** refers to an AES-based fingerprinting function described in chapter 3.4. It's capable of processing more than 10 bytes per clock cycle and produces a 512-bit output.
 
-**BlakeGenerator** refers to a custom pseudo-random number generator described in chapter 3.4. It's based on the Blake2b hashing function.
+**BlakeGenerator** refers to a custom pseudo-random number generator described in chapter 3.5. It's based on the Blake2b hashing function.
 
 **SuperscalarHash** refers to a custom diffusion function designed to run efficiently on superscalar CPUs (see chapter 7). It transforms a 64-byte input value into a 64-byte output value.
 
@@ -62,7 +62,6 @@ RandomX has several configurable parameters that are listed in Table 1.2.1 with 
 |`RANDOMX_ARGON_SALT`|Argon2 salt|`"RandomX\x03"`|
 |`RANDOMX_CACHE_ACCESSES`|The number of random Cache accesses per Dataset item|`8`|
 |`RANDOMX_SUPERSCALAR_LATENCY`|Target latency for SuperscalarHash (in cycles of the reference CPU)|`170`|
-|`RANDOMX_SUPERSCALAR_MAX_SIZE`|The maximum number of instructions of SuperscalarHash|`512`|
 |`RANDOMX_DATASET_BASE_SIZE`|Dataset base size in bytes|`2147483648`|
 |`RANDOMX_DATASET_EXTRA_SIZE`|Dataset extra size in bytes|`33554368`|
 |`RANDOMX_PROGRAM_SIZE`|The number of instructions in a RandomX program|`256`|
@@ -88,20 +87,46 @@ and outputs a 256-bit result `R`.
 
 The algorithm consists of the following steps:
 
-1. The Dataset is initialized using the key value `K` (see chapter 7 for details).
+1. The Dataset is initialized using the key value `K` (described in chapter 7).
 1. 64-byte seed `S` is calculated as `S = Hash512(H)`.
 1. Let `gen1 = AesGenerator1R(S)`.
 1. The Scratchpad is filled with `RANDOMX_SCRATCHPAD_L3` random bytes using generator `gen1`.
 1. Let `gen4 = AesGenerator4R(gen1.state)` (use the final state of `gen1`).
-1. The value of the VM register `fprc` is set to 0 (default rounding mode - see chapter 4.3). 
-1. The VM is programmed using `128 + 8 * RANDOMX_PROGRAM_SIZE` random bytes using generator `gen4` (see chapter 4.5).
-1. The VM is executed (see chapter 4.6).
-1. New 64-byte seed is calculated as `S = Hash512(RegisterFile)`.
+1. The value of the VM register `fprc` is set to 0 (default rounding mode - chapter 4.3).
+1. The VM is programmed using `128 + 8 * RANDOMX_PROGRAM_SIZE` random bytes using generator `gen4` (chapter 4.5).
+1. The VM is executed (chapter 4.6).
+1. A new 64-byte seed is calculated as `S = Hash512(RegisterFile)`.
 1. Set `gen4.state = S` (modify the state of the generator).
 1. Steps 7-10 are performed a total of `RANDOMX_PROGRAM_COUNT` times. The last iteration skips steps 9 and 10.
 1. Scratchpad fingerprint is calculated as `A = AesHash1R(Scratchpad)`.
-1. The binary values of the VM registers `a0`-`a3` (4×16 bytes) are set to the value of `A`.
+1. Bytes 192-255 of the Register File are set to the value of `A`.
 1. Result is calculated as `R = Hash256(RegisterFile)`.
+
+The input of the `Hash512` function in step 9 is the following 256 bytes:
+```
+ +---------------------------------+
+ |         registers r0-r7         | (64 bytes)
+ +---------------------------------+
+ |         registers f0-f3         | (64 bytes)
+ +---------------------------------+
+ |         registers e0-e3         | (64 bytes)
+ +---------------------------------+
+ |         registers a0-a3         | (64 bytes)
+ +---------------------------------+
+```
+
+The input of the `Hash256` function in step 14 is the following 256 bytes:
+```
+ +---------------------------------+
+ |         registers r0-r7         | (64 bytes)
+ +---------------------------------+
+ |         registers f0-f3         | (64 bytes)
+ +---------------------------------+
+ |         registers e0-e3         | (64 bytes)
+ +---------------------------------+
+ |      AesHash1R(Scratchpad)      | (64 bytes)
+ +---------------------------------+
+```
 
 ## 3 Custom functions
 
@@ -144,41 +169,46 @@ state0 (16 B)    state1 (16 B)    state2 (16 B)    state3 (16 B)
 
 ### 3.3 AesGenerator4R
 
-AesGenerator4R works the same way as AesGenerator1R, except it uses 4 rounds per column:
+AesGenerator4R works similar way as AesGenerator1R, except it uses 4 rounds per column. Columns 0 and 1 use a different set of keys than columns 2 and 3.
 
 ```
 state0 (16 B)    state1 (16 B)    state2 (16 B)    state3 (16 B)
      |                |                |                |
  AES decrypt      AES encrypt      AES decrypt      AES encrypt
-   (key0)           (key0)           (key0)           (key0)
+   (key0)           (key0)           (key4)           (key4)
      |                |                |                |
      v                v                v                v
  AES decrypt      AES encrypt      AES decrypt      AES encrypt
-   (key1)           (key1)           (key1)           (key1)
+   (key1)           (key1)           (key5)           (key5)
      |                |                |                |
      v                v                v                v
  AES decrypt      AES encrypt      AES decrypt      AES encrypt
-   (key2)           (key2)           (key2)           (key2)
+   (key2)           (key2)           (key6)           (key6)
      |                |                |                |
      v                v                v                v
  AES decrypt      AES encrypt      AES decrypt      AES encrypt
-   (key3)           (key3)           (key3)           (key3)
+   (key3)           (key3)           (key7)           (key7)
      |                |                |                |
      v                v                v                v
   state0'          state1'          state2'          state3'
 ```
 
-AesGenerator4R uses the following 4 round keys:
+AesGenerator4R uses the following 8 round keys:
 
 ```
-key0 = 5d 46 90 f8 a6 e4 fb 7f b7 82 1f 14 95 9e 35 cf
-key1 = 50 c4 55 6a 8a 27 e8 fe c3 5a 5c bd dc ff 41 67
-key2 = a4 47 4c 11 e4 fd 24 d5 d2 9a 27 a7 ac 4a 32 3d
-key3 = 2a 3a 0c 81 ff ae a9 99 d9 db d3 42 08 db f6 76
+key0 = dd aa 21 64 db 3d 83 d1 2b 6d 54 2f 3f d2 e5 99
+key1 = 50 34 0e b2 55 3f 91 b6 53 9d f7 06 e5 cd df a5
+key2 = 04 d9 3e 5c af 7b 5e 51 9f 67 a4 0a bf 02 1c 17
+key3 = 63 37 62 85 08 5d 8f e7 85 37 67 cd 91 d2 de d8
+key4 = 73 6f 82 b5 a6 a7 d6 e3 6d 8b 51 3d b4 ff 9e 22
+key5 = f3 6b 56 c7 d9 b3 10 9c 4e 4d 02 e9 d2 b7 72 b2
+key6 = e7 c9 73 f2 8b a3 65 f7 0a 66 a9 2b a7 ef 3b f6
+key7 = 09 d6 7c 7a de 39 58 91 fd d1 06 0c 2d 76 b0 c0
 ```
 These keys were generated as:
 ```
-key0, key1, key2, key3 = Hash512("RandomX AesGenerator4R keys")
+key0, key1, key2, key3 = Hash512("RandomX AesGenerator4R keys 0-3")
+key4, key5, key6, key7 = Hash512("RandomX AesGenerator4R keys 4-7")
 ```
 
 ### 3.4 AesHash1R
@@ -239,15 +269,15 @@ finalState0      finalState1      finalState2      finalState3
 
 The final state is the output of the function.
 
-### 3.4 BlakeGenerator
+### 3.5 BlakeGenerator
 
 BlakeGenerator is a simple pseudo-random number generator based on the Blake2b hashing function. It has a 64-byte internal state `S`.
 
-#### 3.4.1 Initialization
+#### 3.5.1 Initialization
 
 The internal state is initialized from a seed value `K` (0-60 bytes long). The seed value is written into the internal state and padded with zeroes. Then the internal state is initialized as `S = Hash512(S)`.
 
-#### 3.4.2 Random number generation
+#### 3.5.2 Random number generation
 
 The generator can generate 1 byte or 4 bytes at a time by supplying data from its internal state `S`. If there are not enough unused bytes left, the internal state is reinitialized as `S = Hash512(S)`.
 
@@ -299,7 +329,7 @@ Floating point registers `f0`-`f3` are the "additive" registers, which can be th
 
 Floating point registers `e0`-`e3` are the "multiplicative" registers, which can be the destination of floating point multiplication, division and square root instructions. Their value is always positive.
 
-`ma` and `mx` are the memory registers. Both are 32 bits wide. `ma` contains the memory address of the next Dataset read and `mx` contains the address of the next Dataset prefetch.
+`ma` and `mx` are the memory registers. Both are 32 bits wide. `ma` contains the memory address of the next Dataset read and `mx` contains the address of the next Dataset prefetch. The values of `ma` and `mx` registers are always aligned to be a multiple of 64.
 
 The 2-bit `fprc` register determines the rounding mode of all floating point operations according to Table 4.3.1. The four rounding modes are defined by the IEEE 754 standard.
 
@@ -392,7 +422,7 @@ Bits 0-3 of quadword 12 are used to select 4 address registers for program execu
 
 #### 4.5.5 Dataset offset
 
-The `datasetOffset` is calculated by bitwise AND of quadword 13 and the value `RANDOMX_DATASET_EXTRA_SIZE / 64`. The result is multiplied by `64`. This offset is used when reading values from the Dataset.
+The `datasetOffset` is calculated as the remainder of dividing quadword 13 by `RANDOMX_DATASET_EXTRA_SIZE / 64 + 1`. The result is multiplied by `64`. This offset is used when reading values from the Dataset.
 
 #### 4.5.6 Group E register masks
 
@@ -447,10 +477,10 @@ There are 256 opcodes, which are distributed between 29 distinct instructions. E
 
 |group|# instructions|# opcodes||
 |---------|-----------------|----|-|
-|integer |17|129|50.4%|
+|integer |17|120|46.9%|
 |floating point |9|94|36.7%|
-|control |2|17|6.6%|
-|store |1|16|6.3%|
+|control |2|26|10.2%|
+|store |1|16|6.2%|
 ||**29**|**256**|**100%**
 
 All instructions are described below in chapters 5.2 - 5.5.
@@ -523,7 +553,7 @@ For integer instructions, the destination is always an integer register (registe
 
 |frequency|instruction|dst|src|`src == dst ?`|operation|
 |-|-|-|-|-|-|
-|25/256|IADD_RS|R|R|`src = dst`|`dst = dst + (src << mod.shift) (+ imm32)`|
+|16/256|IADD_RS|R|R|`src = dst`|`dst = dst + (src << mod.shift) (+ imm32)`|
 |7/256|IADD_M|R|R|`src = 0`|`dst = dst + [mem]`|
 |16/256|ISUB_R|R|R|`src = imm32`|`dst = dst - src`|
 |7/256|ISUB_M|R|R|`src = 0`|`dst = dst - [mem]`|
@@ -537,8 +567,8 @@ For integer instructions, the destination is always an integer register (registe
 |2/256|INEG_R|R|-|-|`dst = -dst`|
 |15/256|IXOR_R|R|R|`src = imm32`|`dst = dst ^ src`|
 |5/256|IXOR_M|R|R|`src = 0`|`dst = dst ^ [mem]`|
-|10/256|IROR_R|R|R|`src = imm32`|`dst = dst >>> src`|
-|0/256|IROL_R|R|R|`src = imm32`|`dst = dst <<< src`|
+|8/256|IROR_R|R|R|`src = imm32`|`dst = dst >>> src`|
+|2/256|IROL_R|R|R|`src = imm32`|`dst = dst <<< src`|
 |4/256|ISWAP_R|R|R|`src = dst`|`temp = src; src = dst; dst = temp`|
 
 #### 5.2.1 IADD_RS
@@ -586,13 +616,13 @@ All floating point operations are rounded according to the current value of the 
 
 |frequency|instruction|dst|src|operation|
 |-|-|-|-|-|
-|8/256|FSWAP_R|F+E|-|`(dst0, dst1) = (dst1, dst0)`|
-|20/256|FADD_R|F|A|`(dst0, dst1) = (dst0 + src0, dst1 + src1)`|
+|4/256|FSWAP_R|F+E|-|`(dst0, dst1) = (dst1, dst0)`|
+|16/256|FADD_R|F|A|`(dst0, dst1) = (dst0 + src0, dst1 + src1)`|
 |5/256|FADD_M|F|R|`(dst0, dst1) = (dst0 + [mem][0], dst1 + [mem][1])`|
-|20/256|FSUB_R|F|A|`(dst0, dst1) = (dst0 - src0, dst1 - src1)`|
+|16/256|FSUB_R|F|A|`(dst0, dst1) = (dst0 - src0, dst1 - src1)`|
 |5/256|FSUB_M|F|R|`(dst0, dst1) = (dst0 - [mem][0], dst1 - [mem][1])`|
 |6/256|FSCAL_R|F|-|<code>(dst0, dst1) = (-2<sup>x0</sup> * dst0, -2<sup>x1</sup> * dst1)</code>|
-|20/256|FMUL_R|E|A|`(dst0, dst1) = (dst0 * src0, dst1 * src1)`|
+|32/256|FMUL_R|E|A|`(dst0, dst1) = (dst0 * src0, dst1 * src1)`|
 |4/256|FDIV_M|E|R|`(dst0, dst1) = (dst0 / [mem][0], dst1 / [mem][1])`|
 |6/256|FSQRT_R|E|-|`(dst0, dst1) = (√dst0, √dst1)`|
 
@@ -634,7 +664,7 @@ There are 2 control instructions.
 |frequency|instruction|dst|src|operation|
 |-|-|-|-|-|
 |1/256|CFROUND|-|R|`fprc = src >>> imm32`
-|16/256|CBRANCH|R|-|`dst = dst + cimm`, conditional jump
+|25/256|CBRANCH|R|-|`dst = dst + cimm`, conditional jump
 
 #### 5.4.1 CFROUND
 This instruction calculates a 2-bit value by rotating the source register right by `imm32` bits and taking the 2 least significant bits (the value of the source register is unaffected). The result is stored in the `fprc` register. This changes the rounding mode of all subsequent floating point instructions.
@@ -786,7 +816,7 @@ SuperscalarHash programs are generated to maximize the usage of all 3 execution 
 Program generation is complete when one of two conditions is met:
 
 1. An instruction is scheduled for execution on cycle that is equal to or greater than `RANDOMX_SUPERSCALAR_LATENCY`
-1. The number of generated instructions reaches `RANDOMX_SUPERSCALAR_MAX_SIZE`
+1. The number of generated instructions reaches `3 * RANDOMX_SUPERSCALAR_LATENCY + 2`.
 
 #### 6.3.1 Decoding stage
 
@@ -852,7 +882,7 @@ The Dataset is a read-only memory structure that is used during program executio
 
 In order to allow PoW verification with a lower amount of memory, the Dataset is constructed in two steps using an intermediate structure called the "Cache", which can be used to calculate Dataset items on the fly.
 
-The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated everytime the key value changes. Fig. 7.1 shows the process of Dataset construction.
+The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated every time the key value changes. Fig. 7.1 shows the process of Dataset construction. Note: the maximum supported length of `K` is 60 bytes. Using a longer key results in implementation-defined behavior.
 
 *Figure 7.1 - Dataset construction*
 
@@ -881,7 +911,7 @@ The finalizer and output calculation steps of Argon2 are omitted. The output is 
 
 ### 7.2 SuperscalarHash initialization
 
-The key value `K` is used to initialize a BlakeGenerator (see chapter 3.4), which is then used to generate 8 SuperscalarHash instances for Dataset initialization.
+The key value `K` is used to initialize a BlakeGenerator (see chapter 3.5), which is then used to generate 8 SuperscalarHash instances for Dataset initialization.
 
 ### 7.3 Dataset block generation
 Dataset items are numbered sequentially with `itemNumber` starting from 0. Each 64-byte Dataset item is generated independently using 8 SuperscalarHash functions (generated according to chapter 7.2) and by XORing randomly selected data from the Cache (constructed according to chapter 7.1).
@@ -904,10 +934,10 @@ The item data is represented by 8 64-bit integer registers: `r0`-`r7`.
 1. XOR all registers with the 64 bytes loaded in step 4 (8 bytes per column in order `r0`-`r7`).
 1. Set `cacheIndex` to the value of the register that has the longest dependency chain in the SuperscalarHash function executed in step 5.
 1. Set `i = i + 1` and go back to step 4 if `i < RANDOMX_CACHE_ACCESSES`.
-1. Concatenate registers `r0`-`r7` in little endian format to get the final Datset item data.
+1. Concatenate registers `r0`-`r7` in little endian format to get the final Dataset item data.
 
 The constants used to initialize register values in step 1 were determined as follows:
 
 * Multiplier `6364136223846793005` was selected because it gives an excellent distribution for linear generators (D. Knuth: The Art of Computer Programming – Vol 2., also listed in [Commonly used LCG parameters](https://en.wikipedia.org/wiki/Linear_congruential_generator#Parameters_in_common_use))
-* XOR constants used to initialize registers `r1`-`r7` were determined by calculating a 512-bit Blake2b hash of the ASCII value `RandomX SuperScalarHash initialize` and taking bytes 8-63 as 7 little-endian unsigned 64-bit integers. Additionally, the constant for `r1` was increased by <code>2<sup>33</sup>+700</code> and the constant for `r3` was increased by <code>2<sup>14</sup></code> (these changes are necessary to ensure that all registers have unique initial values for all values of `itemNumber`).
+* XOR constants used to initialize registers `r1`-`r7` were determined by calculating `Hash512` of the ASCII value `"RandomX SuperScalarHash initialize"` and taking bytes 8-63 as 7 little-endian unsigned 64-bit integers. Additionally, the constant for `r1` was increased by <code>2<sup>33</sup>+700</code> and the constant for `r3` was increased by <code>2<sup>14</sup></code> (these changes are necessary to ensure that all registers have unique initial values for all values of `itemNumber`).
 

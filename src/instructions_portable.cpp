@@ -26,7 +26,6 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#pragma STDC FENV_ACCESS ON
 #include <cfenv>
 #include <cmath>
 #include "common.hpp"
@@ -52,10 +51,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 	#include <intrin.h>
 	#include <stdlib.h>
 
-	uint64_t rotl(uint64_t x, int c) {
+	uint64_t rotl(uint64_t x, unsigned int c) {
 		return _rotl64(x, c);
 	}
-	uint64_t rotr(uint64_t x , int c) {
+	uint64_t rotr(uint64_t x, unsigned int c) {
 		return _rotr64(x, c);
 	}
 	#define HAVE_ROTL
@@ -90,15 +89,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #ifndef HAVE_ROTR
-	uint64_t rotr(uint64_t a, int b) {
-		return (a >> b) | (a << (64 - b));
+	uint64_t rotr(uint64_t a, unsigned int b) {
+		return (a >> b) | (a << (-b & 63));
 	}
 	#define HAVE_ROTR
 #endif
 
 #ifndef HAVE_ROTL
-	uint64_t rotl(uint64_t a, int b) {
-		return (a << b) | (a >> (64 - b));
+	uint64_t rotl(uint64_t a, unsigned int b) {
+		return (a << b) | (a >> (-b & 63));
 	}
 	#define HAVE_ROTL
 #endif
@@ -158,11 +157,26 @@ void rx_set_rounding_mode(uint32_t mode) {
 	}
 }
 
+uint32_t rx_get_rounding_mode() {
+	switch (fegetround()) {
+	case FE_DOWNWARD:
+		return RoundDown;
+	case FE_UPWARD:
+		return RoundUp;
+	case FE_TOWARDZERO:
+		return RoundToZero;
+	case FE_TONEAREST:
+		return RoundToNearest;
+	default:
+		UNREACHABLE;
+	}
+}
+
 #endif
 
 #ifdef RANDOMX_USE_X87
 
-#ifdef _M_IX86
+#if defined(_MSC_VER) && defined(_M_IX86)
 
 void rx_set_double_precision() {
 	_control87(_PC_53, _MCW_PC);

@@ -45,15 +45,48 @@ typedef enum {
   RANDOMX_FLAG_HARD_AES = 2,
   RANDOMX_FLAG_FULL_MEM = 4,
   RANDOMX_FLAG_JIT = 8,
+  RANDOMX_FLAG_SECURE = 16,
+  RANDOMX_FLAG_ARGON2_SSSE3 = 32,
+  RANDOMX_FLAG_ARGON2_AVX2 = 64,
+  RANDOMX_FLAG_ARGON2 = 96
 } randomx_flags;
 
 typedef struct randomx_dataset randomx_dataset;
 typedef struct randomx_cache randomx_cache;
 typedef struct randomx_vm randomx_vm;
 
+
 #if defined(__cplusplus)
+
+#ifdef __cpp_constexpr
+#define CONSTEXPR constexpr
+#else
+#define CONSTEXPR
+#endif
+
+inline CONSTEXPR randomx_flags operator |(randomx_flags a, randomx_flags b) {
+	return static_cast<randomx_flags>(static_cast<int>(a) | static_cast<int>(b));
+}
+inline CONSTEXPR randomx_flags operator &(randomx_flags a, randomx_flags b) {
+	return static_cast<randomx_flags>(static_cast<int>(a) & static_cast<int>(b));
+}
+inline randomx_flags& operator |=(randomx_flags& a, randomx_flags b) {
+	return a = a | b;
+}
+
 extern "C" {
 #endif
+
+/**
+ * @return The recommended flags to be used on the current machine.
+ *         Does not include:
+ *            RANDOMX_FLAG_LARGE_PAGES
+ *            RANDOMX_FLAG_FULL_MEM
+ *            RANDOMX_FLAG_SECURE
+ *         These flags must be added manually if desired.
+ *         On OpenBSD RANDOMX_FLAG_SECURE is enabled by default in JIT mode as W^X is enforced by the OS.
+ */
+RANDOMX_EXPORT randomx_flags randomx_get_flags(void);
 
 /**
  * Creates a randomx_cache structure and allocates memory for RandomX Cache.
@@ -62,15 +95,23 @@ extern "C" {
  *        RANDOMX_FLAG_LARGE_PAGES - allocate memory in large pages
  *        RANDOMX_FLAG_JIT - create cache structure with JIT compilation support; this makes
  *                           subsequent Dataset initialization faster
+ *        Optionally, one of these two flags may be selected:
+ *        RANDOMX_FLAG_ARGON2_SSSE3 - optimized Argon2 for CPUs with the SSSE3 instruction set
+ *                                   makes subsequent cache initialization faster
+ *        RANDOMX_FLAG_ARGON2_AVX2 - optimized Argon2 for CPUs with the AVX2 instruction set
+ *                                   makes subsequent cache initialization faster
  *
  * @return Pointer to an allocated randomx_cache structure.
- *         NULL is returned if memory allocation fails or if the RANDOMX_FLAG_JIT
- *         is set and JIT compilation is not supported on the current platform.
+ *         Returns NULL if:
+ *         (1) memory allocation fails
+ *         (2) the RANDOMX_FLAG_JIT is set and JIT compilation is not supported on the current platform
+ *         (3) an invalid or unsupported RANDOMX_FLAG_ARGON2 value is set
  */
 RANDOMX_EXPORT randomx_cache *randomx_alloc_cache(randomx_flags flags);
 
 /**
  * Initializes the cache memory and SuperscalarHash using the provided key value.
+ * Does nothing if called again with the same key value.
  *
  * @param cache is a pointer to a previously allocated randomx_cache structure. Must not be NULL.
  * @param key is a pointer to memory which contains the key value. Must not be NULL.
@@ -101,7 +142,7 @@ RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset(randomx_flags flags);
  *
  * @return the number of items contained in the dataset.
 */
-RANDOMX_EXPORT uint64_t randomx_dataset_item_count(void);
+RANDOMX_EXPORT unsigned long randomx_dataset_item_count(void);
 
 /**
  * Initializes dataset items.
@@ -111,16 +152,16 @@ RANDOMX_EXPORT uint64_t randomx_dataset_item_count(void);
  *
  * @param dataset is a pointer to a previously allocated randomx_dataset structure. Must not be NULL.
  * @param cache is a pointer to a previously allocated and initialized randomx_cache structure. Must not be NULL.
- * @param startItem is the item number where intialization should start.
+ * @param startItem is the item number where initialization should start.
  * @param itemCount is the number of items that should be initialized.
 */
-RANDOMX_EXPORT void randomx_init_dataset(randomx_dataset *dataset, randomx_cache *cache, uint64_t startItem, uint64_t itemCount);
+RANDOMX_EXPORT void randomx_init_dataset(randomx_dataset *dataset, randomx_cache *cache, unsigned long startItem, unsigned long itemCount);
 
 /**
  * Returns a pointer to the internal memory buffer of the dataset structure. The size
  * of the internal memory buffer is randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE.
  *
- * @param dataset is dataset is a pointer to a previously allocated randomx_dataset structure. Must not be NULL.
+ * @param dataset is a pointer to a previously allocated randomx_dataset structure. Must not be NULL.
  *
  * @return Pointer to the internal memory buffer of the dataset structure.
 */
@@ -136,12 +177,14 @@ RANDOMX_EXPORT void randomx_release_dataset(randomx_dataset *dataset);
 /**
  * Creates and initializes a RandomX virtual machine.
  *
- * @param flags is any combination of these 4 flags (each flag can be set or not set):
+ * @param flags is any combination of these 5 flags (each flag can be set or not set):
  *        RANDOMX_FLAG_LARGE_PAGES - allocate scratchpad memory in large pages
  *        RANDOMX_FLAG_HARD_AES - virtual machine will use hardware accelerated AES
  *        RANDOMX_FLAG_FULL_MEM - virtual machine will use the full dataset
  *        RANDOMX_FLAG_JIT - virtual machine will use a JIT compiler
- *        The numeric values of the flags are ordered so that a higher value will provide
+ *        RANDOMX_FLAG_SECURE - when combined with RANDOMX_FLAG_JIT, the JIT pages are never
+ *                              writable and executable at the same time (W^X policy)
+ *        The numeric values of the first 4 flags are ordered so that a higher value will provide
  *        faster hash calculation and a lower numeric value will provide higher portability.
  *        Using RANDOMX_FLAG_DEFAULT (all flags not set) works on all platforms, but is the slowest.
  * @param cache is a pointer to an initialized randomx_cache structure. Can be
@@ -160,7 +203,8 @@ RANDOMX_EXPORT randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache 
 
 /**
  * Reinitializes a virtual machine with a new Cache. This function should be called anytime
- * the Cache is reinitialized with a new key.
+ * the Cache is reinitialized with a new key. Does nothing if called with a Cache containing
+ * the same key value as already set.
  *
  * @param machine is a pointer to a randomx_vm structure that was initialized
  *        without RANDOMX_FLAG_FULL_MEM. Must not be NULL.
@@ -194,6 +238,38 @@ RANDOMX_EXPORT void randomx_destroy_vm(randomx_vm *machine);
  *        be NULL and at least RANDOMX_HASH_SIZE bytes must be available for writing.
 */
 RANDOMX_EXPORT void randomx_calculate_hash(randomx_vm *machine, const void *input, size_t inputSize, void *output);
+
+/**
+ * Set of functions used to calculate multiple RandomX hashes more efficiently.
+ * randomx_calculate_hash_first will begin a hash calculation.
+ * randomx_calculate_hash_next  will output the hash value of the previous input
+ *                              and begin the calculation of the next hash.
+ * randomx_calculate_hash_last  will output the hash value of the previous input.
+ *
+ * WARNING: These functions may alter the floating point rounding mode of the calling thread.
+ *
+ * @param machine is a pointer to a randomx_vm structure. Must not be NULL.
+ * @param input is a pointer to memory to be hashed. Must not be NULL.
+ * @param inputSize is the number of bytes to be hashed.
+ * @param nextInput is a pointer to memory to be hashed for the next hash. Must not be NULL.
+ * @param nextInputSize is the number of bytes to be hashed for the next hash.
+ * @param output is a pointer to memory where the hash will be stored. Must not
+ *        be NULL and at least RANDOMX_HASH_SIZE bytes must be available for writing.
+*/
+RANDOMX_EXPORT void randomx_calculate_hash_first(randomx_vm* machine, const void* input, size_t inputSize);
+RANDOMX_EXPORT void randomx_calculate_hash_next(randomx_vm* machine, const void* nextInput, size_t nextInputSize, void* output);
+RANDOMX_EXPORT void randomx_calculate_hash_last(randomx_vm* machine, void* output);
+
+/**
+ * Calculate a RandomX commitment from a RandomX hash and its input.
+ *
+ * @param input is a pointer to memory that was hashed. Must not be NULL.
+ * @param inputSize is the number of bytes in the input.
+ * @param hash_in is the output from randomx_calculate_hash* (RANDOMX_HASH_SIZE bytes).
+ * @param com_out is a pointer to memory where the commitment will be stored. Must not
+ *        be NULL and at least RANDOMX_HASH_SIZE bytes must be available for writing.
+*/
+RANDOMX_EXPORT void randomx_calculate_commitment(const void* input, size_t inputSize, const void* hash_in, void* com_out);
 
 #if defined(__cplusplus)
 }

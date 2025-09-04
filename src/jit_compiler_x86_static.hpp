@@ -29,6 +29,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 extern "C" {
+	void randomx_prefetch_scratchpad();
+	void randomx_prefetch_scratchpad_end();
 	void randomx_program_prologue();
 	void randomx_program_loop_begin();
 	void randomx_program_loop_load();
