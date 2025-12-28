@@ -40,6 +40,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #  include <sys/utsname.h>
 #  include <stdio.h>
 # endif
+# if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+#  include <libkern/OSCacheControl.h>
+# endif
 #endif
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -189,10 +192,17 @@ void setPagesRX(void* ptr, size_t bytes) {
 	&& MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_VERSION_11_0
 	if (__builtin_available(macOS 11.0, *)) {
 		pthread_jit_write_protect_np(1);
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+		sys_icache_invalidate(ptr, bytes);
+#else
 		__builtin___clear_cache((char*)ptr, ((char*)ptr) + bytes);
+#endif
 	} else {
 		pageProtect(ptr, bytes, PAGE_EXECUTE_READ, &errfunc);
 	}
+#elif TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+	pageProtect(ptr, bytes, PAGE_EXECUTE_READ, &errfunc);
+	sys_icache_invalidate(ptr, bytes);
 #else
 	pageProtect(ptr, bytes, PAGE_EXECUTE_READ, &errfunc);
 #endif
