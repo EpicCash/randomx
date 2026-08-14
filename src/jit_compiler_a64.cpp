@@ -33,6 +33,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "reciprocal.h"
 #include "virtual_memory.h"
 
+// iOS-specific cache control.
+#if defined(__APPLE__) && (defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR))
+#include <libkern/OSCacheControl.h>
+#define CLEAR_CACHE(start, end) sys_icache_invalidate((void*)(start), (size_t)((char*)(end) - (char*)(start)))
+#elif defined(__GNUC__)
+#define CLEAR_CACHE(start, end) __builtin___clear_cache((char*)(start), (char*)(end))
+#else
+#define CLEAR_CACHE(start, end)
+#endif
+
 namespace ARMV8A {
 
 constexpr uint32_t B           = 0x14000000;
@@ -98,9 +108,7 @@ JitCompilerA64::JitCompilerA64()
 	memset(reg_changed_offset, 0, sizeof(reg_changed_offset));
 	memcpy(code, (void*) randomx_program_aarch64, CodeSize);
 
-#ifdef __GNUC__
-	__builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + CodeSize));
-#endif
+	CLEAR_CACHE(code, code + CodeSize);
 }
 
 JitCompilerA64::~JitCompilerA64()
@@ -169,9 +177,7 @@ void JitCompilerA64::generateProgram(Program& program, ProgramConfiguration& con
 	codePos = ((uint8_t*)randomx_program_aarch64_update_spMix1) - ((uint8_t*)randomx_program_aarch64);
 	emit32(ARMV8A::EOR | 10 | (IntRegMap[config.readReg0] << 5) | (IntRegMap[config.readReg1] << 16), code, codePos);
 
-#ifdef __GNUC__
-	__builtin___clear_cache(reinterpret_cast<char*>(code + MainLoopBegin), reinterpret_cast<char*>(code + codePos));
-#endif
+	CLEAR_CACHE(code + MainLoopBegin, code + codePos);
 }
 
 void JitCompilerA64::generateProgramLight(Program& program, ProgramConfiguration& config, uint32_t datasetOffset)
@@ -226,9 +232,7 @@ void JitCompilerA64::generateProgramLight(Program& program, ProgramConfiguration
 	emit32(ARMV8A::ADD_IMM_LO | 2 | (2 << 5) | (imm_lo << 10), code, codePos);
 	emit32(ARMV8A::ADD_IMM_HI | 2 | (2 << 5) | (imm_hi << 10), code, codePos);
 
-#ifdef __GNUC__
-	__builtin___clear_cache(reinterpret_cast<char*>(code + MainLoopBegin), reinterpret_cast<char*>(code + codePos));
-#endif
+	CLEAR_CACHE(code + MainLoopBegin, code + codePos);
 }
 
 template<size_t N>
@@ -344,9 +348,7 @@ void JitCompilerA64::generateSuperscalarHash(SuperscalarProgram(&programs)[N], s
 	memcpy(code + codePos, p1, p2 - p1);
 	codePos += p2 - p1;
 
-#ifdef __GNUC__
-	__builtin___clear_cache(reinterpret_cast<char*>(code + CodeSize), reinterpret_cast<char*>(code + codePos));
-#endif
+	CLEAR_CACHE(code + CodeSize, code + codePos);
 }
 
 template void JitCompilerA64::generateSuperscalarHash(SuperscalarProgram(&programs)[RANDOMX_CACHE_ACCESSES], std::vector<uint64_t> &reciprocalCache);
